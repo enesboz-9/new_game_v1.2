@@ -11,63 +11,66 @@ import base64
 from rapidfuzz import fuzz
 
 # --- Wikipedia Güvenlik Ayarı ---
-# Engellenmemek için kendimizi tanıtıyoruz
-wikipedia.set_user_agent("GosterBakalim/3.0 (iletisim@projen.com)")
+# Wikipedia'nın sizi bot sanıp engellememesi için geçerli bir User-Agent şarttır.
+wikipedia.set_user_agent("GosterBakalimV3/1.0 (iletisim@projen.com)")
 
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="🌟 Göster Bakalım", layout="centered")
 
-# --- Resim Çekme Fonksiyonu (GELİŞTİRİLMİŞ) ---
+# --- Geliştirilmiş Görsel Çekme Fonksiyonu ---
 @st.cache_data(ttl=3600)
 def get_img(name, cat):
     try:
+        # Wikipedia API'den doğrudan görsel URL'sini sorgula
+        S = requests.Session()
+        URL = "https://en.wikipedia.org/w/api.php"
+        
         # Arama terimini optimize et
         query = name
-        if cat == "Şirket Logoları": query = f"{name} logo company"
-        elif cat == "Futbolcular": query = f"{name} football player portrait"
-        elif cat == "Ünlüler": query = f"{name} person"
+        if cat == "Şirket Logoları": query = f"{name} brand logo"
         
+        PARAMS = {
+            "action": "query",
+            "format": "json",
+            "titles": query,
+            "prop": "pageimages",
+            "piprop": "original",
+            "redirects": 1
+        }
+        
+        R = S.get(url=URL, params=PARAMS)
+        DATA = R.json()
+        
+        pages = DATA['query']['pages']
+        for k, v in pages.items():
+            if 'original' in v:
+                return v['original']['source']
+        
+        # Eğer API'den sonuç gelmezse klasik yöntemi dene
         search = wikipedia.search(query)
-        if not search: return None
-        
-        # En alakalı sayfayı çek
-        page = wikipedia.page(search[0], auto_suggest=False)
-        images = page.images
-        
-        # Çöp resimleri ele (logolar, ikonlar, bayraklar)
-        clean_images = [
-            img for img in images 
-            if img.lower().endswith(('.jpg', '.jpeg', '.png')) 
-            and not any(x in img.lower() for x in ['flag', 'icon', 'symbol', 'logo_steward', 'stub', 'wikimedia-logo', 'commons-logo'])
-        ]
-        
-        return clean_images[0] if clean_images else None
+        if search:
+            page = wikipedia.page(search[0], auto_suggest=False)
+            images = [img for img in page.images if img.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            if images: return images[0]
+            
+        return None
     except:
         return None
 
 # --- Yardımcı Fonksiyonlar ---
-def play_sound(file_name):
-    file_path = os.path.join("sounds", file_name)
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "rb") as f:
-                data = f.read()
-                b64 = base64.b64encode(data).decode()
-                md = f'<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>'
-                st.components.v1.html(md, height=0)
-        except: pass
-
 def is_guess_correct(user_guess, correct_name):
     if not user_guess: return False
+    # Hem tam eşleşme hem de benzerlik kontrolü
     similarity = fuzz.token_sort_ratio(user_guess.lower(), correct_name.lower())
     return similarity >= 80
 
 @st.cache_data
 def load_data():
-    if os.path.exists('data.json'):
+    try:
         with open('data.json', 'r', encoding='utf-8') as f:
             return json.load(f)
-    return None
+    except:
+        return None
 
 # --- Oyun Mantığı ---
 data = load_data()
@@ -91,10 +94,10 @@ if not st.session_state.game_init:
             st.session_state.game_init = True
             st.rerun()
     else:
-        st.error("data.json dosyası bulunamadı!")
+        st.error("data.json dosyası eksik veya hatalı!")
     st.stop()
 
-# Soru Seçimi
+# Yeni Soru Belirleme
 if st.session_state.target_item is None and not st.session_state.game_finished:
     pool = data[st.session_state.category]
     available = [i for i in pool if i['name'] not in st.session_state.played_items]
@@ -106,6 +109,7 @@ if st.session_state.target_item is None and not st.session_state.game_finished:
     else:
         st.session_state.game_finished = True
 
+# Oyun Sonu
 if st.session_state.game_finished:
     st.balloons()
     st.title("🏆 Yarışma Bitti!")
@@ -115,39 +119,36 @@ if st.session_state.game_finished:
         st.rerun()
     st.stop()
 
-# --- Ekran Tasarımı ---
+# --- Görsel Görüntüleme Bölümü ---
 item = st.session_state.target_item
 st.subheader(f"Soru: {st.session_state.current_question}/5 | Skor: {st.session_state.total_score}")
 
 url = get_img(item['name'], st.session_state.category)
-img_placeholder = st.empty()
 
 if url:
     try:
-        res = requests.get(url, timeout=10)
-        raw_img = Image.open(BytesIO(res.content)).convert("RGB")
+        response = requests.get(url, timeout=5)
+        img = Image.open(BytesIO(response.content)).convert("RGB")
         blur_val = st.session_state.blur_levels[min(st.session_state.attempts, 4)]
-        img_placeholder.image(raw_img.filter(ImageFilter.GaussianBlur(blur_val)), use_container_width=True)
-    except:
-        st.warning("Resim şu an yüklenemiyor, bu soru atlanıyor...")
-        time.sleep(1)
+        st.image(img.filter(ImageFilter.GaussianBlur(blur_val)), use_container_width=True)
+    except Exception as e:
+        st.error("Görsel indirilemedi, yeni soruya geçiliyor...")
         st.session_state.target_item = None
         st.rerun()
 else:
-    st.info("🔄 Görsel Wikipedia'da aranıyor veya bulunamadı, lütfen bekleyin...")
+    st.warning(f"'{item['name']}' için görsel bulunamadı, atlanıyor...")
     time.sleep(1)
-    st.session_state.target_item = None # Resim yoksa yeni soruya geç
+    st.session_state.target_item = None
     st.rerun()
 
-# Tahmin ve İpuçları
-with st.form("guess_form"):
-    guess = st.text_input("Tahmininiz nedir?")
-    submitted = st.form_submit_button("Gönder")
+# --- Tahmin Formu ---
+with st.form("guess_form", clear_on_submit=True):
+    user_guess = st.text_input("Tahmininiz:")
+    btn = st.form_submit_button("Gönder")
 
-if submitted:
-    if is_guess_correct(guess, item['name']):
-        st.success(f"👏 Tebrikler! Doğru cevap: {item['name']}")
-        play_sound("correct.mp3")
+if btn:
+    if is_guess_correct(user_guess, item['name']):
+        st.success(f"✅ Doğru! Cevap: {item['name']}")
         st.session_state.total_score += (5 - st.session_state.attempts) * 10 * st.session_state.mult
         time.sleep(2)
         st.session_state.target_item = None
@@ -156,18 +157,16 @@ if submitted:
     else:
         st.session_state.attempts += 1
         if st.session_state.attempts >= 5:
-            st.error(f"❌ Maalesef! Doğru cevap şuydu: {item['name']}")
-            play_sound("wrong.mp3")
+            st.error(f"❌ Bilemediniz! Doğru cevap: {item['name']}")
             time.sleep(2)
             st.session_state.target_item = None
             st.session_state.current_question += 1
         else:
-            st.warning("Yanlış tahmin! Resim biraz daha netleşti.")
-            play_sound("wrong.mp3")
+            st.warning("Yanlış! Görsel netleşiyor...")
         st.rerun()
 
-# İpucu Gösterimi
+# İpuçları
 if st.session_state.attempts > 0:
-    st.info(f"📍 İpucu 1 (Milliyet): {item['nationality']}")
+    st.info(f"📍 İpucu: {item['nationality']}")
 if st.session_state.attempts > 2:
-    st.info(f"💡 İpucu 2 (Bilgi): {item['moment']}")
+    st.info(f"💡 Bilgi: {item['moment']}")
