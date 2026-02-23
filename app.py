@@ -9,17 +9,28 @@ import json
 import os
 import base64
 
-# --- Wikipedia Güvenlik Kimliği ---
-wikipedia.set_user_agent("GosterBakalimGenel/1.0 (iletisim@projen.com)")
+# --- Wikipedia Kimlik Tanımlama ---
+wikipedia.set_user_agent("GosterBakalimV6/1.0 (iletisim@projen.com)")
 
 # --- Sayfa Ayarları ---
 st.set_page_config(page_title="🌟 Göster Bakalım!", layout="centered")
 
-# --- Wikipedia'dan Akıllı Resim Çekme ---
+# --- Ses Çalma Fonksiyonu (Altyapı hazırlandı) ---
+def play_sound(file_path):
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "rb") as f:
+                data = f.read()
+                b64 = base64.b64encode(data).decode()
+                md = f'<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>'
+                st.components.v1.html(md, height=0)
+        except:
+            pass
+
+# --- Akıllı Resim Çekme ---
 @st.cache_data(ttl=86400)
 def get_wiki_image(name, category):
     try:
-        # Kategoriye göre arama terimini güçlendir
         search_query = name
         if category == "Futbolcular": search_query += " footballer"
         elif category == "Şirket Logoları": search_query += " logo brand"
@@ -29,29 +40,23 @@ def get_wiki_image(name, category):
         if not search_results: return None
         
         page = wikipedia.page(search_results[0], auto_suggest=False)
-        
-        # Senin başarılı filtren:
         valid_images = [
             img for img in page.images 
             if img.lower().endswith(('.jpg', '.jpeg', '.png')) 
             and not any(bad in img.lower() for bad in ["logo", "flag", "icon", "symbol", "stub"])
         ]
-        
         return valid_images[0] if valid_images else None
     except:
         return None
 
-# --- Resim İndirme (Tarayıcı Taklidi İle) ---
+# --- Resim İndirme ---
 @st.cache_data
 def fetch_image(url):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
+        headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=15)
         if response.status_code == 200:
-            img = Image.open(BytesIO(response.content))
-            return img.convert("RGB")
+            return Image.open(BytesIO(response.content)).convert("RGB")
         return None
     except:
         return None
@@ -76,17 +81,17 @@ if "game_init" not in st.session_state:
 if not st.session_state.game_init:
     st.title("🌟 Göster Bakalım!")
     if data:
-        st.session_state.category = st.selectbox("Kategori Seçin:", list(data.keys()))
-        diff = st.selectbox("Zorluk Seviyesi:", ["Kolay", "Orta", "Zor"])
+        st.session_state.category = st.selectbox("Bir Kategori Seçin:", list(data.keys()))
+        diff = st.selectbox("Zorluk Seviyesi Seçin:", ["Kolay", "Orta", "Zor"])
         if st.button("OYUNA BAŞLA"):
             st.session_state.difficulty = diff
-            if diff == "Kolay": st.session_state.blur_levels, st.session_state.multiplier = [20, 15, 8, 3, 0], 1
-            elif diff == "Orta": st.session_state.blur_levels, st.session_state.multiplier = [40, 25, 15, 8, 0], 2
-            else: st.session_state.blur_levels, st.session_state.multiplier = [65, 45, 25, 12, 0], 3
+            if diff == "Kolay": st.session_state.blur_levels, st.session_state.multiplier = [15, 10, 5, 2, 0], 1
+            elif diff == "Orta": st.session_state.blur_levels, st.session_state.multiplier = [30, 20, 10, 5, 0], 2
+            else: st.session_state.blur_levels, st.session_state.multiplier = [50, 35, 20, 8, 0], 3
             st.session_state.game_init = True
             st.rerun()
     else:
-        st.error("data.json bulunamadı!")
+        st.error("data.json dosyası bulunamadı!")
     st.stop()
 
 # --- Soru Seçme ---
@@ -101,18 +106,22 @@ if st.session_state.target_item is None and not st.session_state.game_finished:
     else:
         st.session_state.game_finished = True
 
+# --- Oyun Bitiş Ekranı ---
 if st.session_state.game_finished:
-    st.balloons(); st.header("🏆 Oyun Bitti!"); st.metric("Toplam Puan", st.session_state.total_score)
-    if st.button("🔄 Yeniden Başla"):
-        for k in list(st.session_state.keys()): del st.session_state[k]
+    st.balloons()
+    st.header("🏆 Tur Tamamlandı!")
+    st.metric("Toplam Puan", st.session_state.total_score)
+    if st.button("🔄 Tekrar Oyna"):
+        for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
     st.stop()
 
-# --- Oyun Ekranı ---
+# --- Ana Oyun Ekranı ---
 item = st.session_state.target_item
-st.subheader(f"Soru {st.session_state.current_question}/5 | Skor: {st.session_state.total_score}")
-image_placeholder = st.empty()
+st.title(f"Soru {st.session_state.current_question}/5")
+st.subheader(f"Skor: {st.session_state.total_score}")
 
+image_placeholder = st.empty()
 image_url = get_wiki_image(item['name'], st.session_state.category)
 
 if image_url:
@@ -120,36 +129,58 @@ if image_url:
     if raw_img:
         idx = min(st.session_state.attempts, 4)
         blur_val = st.session_state.blur_levels[idx]
-        display_img = raw_img.filter(ImageFilter.GaussianBlur(blur_val))
+        display_img = raw_img.filter(ImageFilter.GaussianBlur(blur_val)) if blur_val > 0 else raw_img
         image_placeholder.image(display_img, use_container_width=True)
     else:
         st.warning("Resim indirilemedi, atlanıyor...")
         time.sleep(1); st.session_state.target_item = None; st.rerun()
 else:
-    st.warning("Görsel bulunamadı, yeni soruya geçiliyor...")
+    st.warning("Resim bulunamadı, yeni soruya geçiliyor...")
     time.sleep(1); st.session_state.target_item = None; st.rerun()
 
-# Tahmin Formu
+# --- İpuçları Alanı ---
+with st.expander("💡 İpucu Al", expanded=True):
+    if st.session_state.attempts > 0: st.info(f"🌍 Milliyet/Köken: {item['nationality']}")
+    if st.session_state.attempts > 1: st.info(f"✨ Hakkında: {item['moment']}")
+
+# --- Kontrol Butonları ve Tahmin Formu ---
 with st.form("guess_form", clear_on_submit=True):
-    user_guess = st.text_input("Tahmininiz:").lower().strip()
-    if st.form_submit_button("Tahmin Et"):
-        correct_name = item['name'].lower()
-        # Senin başarılı esnek eşleşme mantığın:
-        if user_guess and (user_guess in correct_name and len(user_guess) > 3):
-            st.success(f"✅ DOĞRU! Cevap: {item['name']}")
-            st.session_state.total_score += (5 - st.session_state.attempts) * 20 * st.session_state.multiplier
-            time.sleep(2); st.session_state.target_item = None
-            st.session_state.current_question += 1; st.rerun()
+    user_guess = st.text_input("Tahmininiz nedir?").strip()
+    col1, col2 = st.columns(2)
+    submit = col1.form_submit_button("Tahmin Et", use_container_width=True)
+    pass_btn = col2.form_submit_button("Pas Geç", use_container_width=True)
+
+if submit:
+    correct_name = item['name'].lower()
+    guess_clean = user_guess.lower()
+    # Esnek Kontrol: Tahmin doğru ismin içindeyse ve yeterince uzunsa doğru say
+    if guess_clean and (guess_clean in correct_name and len(guess_clean) > 3):
+        play_sound("sounds/correct.mp3") # Varsa çalar
+        image_placeholder.image(raw_img, use_container_width=True, caption=f"TEBRİKLER! {item['name']}")
+        puan = (5 - st.session_state.attempts) * 20 * st.session_state.multiplier
+        st.session_state.total_score += puan
+        st.success(f"✅ DOĞRU! +{puan} Puan")
+        time.sleep(3)
+        st.session_state.target_item = None
+        st.session_state.current_question += 1
+        st.rerun()
+    else:
+        st.session_state.attempts += 1
+        if st.session_state.attempts >= 5:
+            st.error(f"❌ Hak bitti! Cevap: {item['name']}")
+            image_placeholder.image(raw_img, use_container_width=True, caption=f"Cevap: {item['name']}")
+            time.sleep(3)
+            st.session_state.target_item = None
+            st.session_state.current_question += 1
+            st.rerun()
         else:
-            st.session_state.attempts += 1
-            if st.session_state.attempts >= 5:
-                st.error(f"❌ Hak bitti! Cevap: {item['name']}")
-                time.sleep(2); st.session_state.target_item = None
-                st.session_state.current_question += 1
+            st.warning(f"❌ Yanlış! {5 - st.session_state.attempts} hakkınız kaldı.")
             st.rerun()
 
-# İpuçları
-if st.session_state.attempts > 0:
-    st.info(f"📍 İpucu 1: {item['nationality']}")
-if st.session_state.attempts > 2:
-    st.info(f"💡 İpucu 2: {item['moment']}")
+if pass_btn:
+    image_placeholder.image(raw_img, use_container_width=True, caption=f"Pas Geçildi. Cevap: {item['name']}")
+    st.info(f"⏭️ Pas geçtiniz. Doğru cevap: **{item['name']}**")
+    time.sleep(3)
+    st.session_state.target_item = None
+    st.session_state.current_question += 1
+    st.rerun()
