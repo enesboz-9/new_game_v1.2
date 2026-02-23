@@ -7,74 +7,63 @@ import random
 import time
 import json
 import os
-import base64
 from rapidfuzz import fuzz
 
-# --- Ayarlar ---
-st.set_page_config(page_title="🌟 Göster Bakalım - Pro", layout="centered")
-wikipedia.set_user_agent("GosterBakalimV4/1.0 (iletisim@projen.com)")
+# --- Wikipedia Güvenlik Ayarı ---
+wikipedia.set_user_agent("GosterBakalimV5/1.0 (iletisim@projen.com)")
 
-# --- Görsel Arama Motorları ---
+# --- Sayfa Ayarları ---
+st.set_page_config(page_title="🌟 Göster Bakalım", layout="centered")
 
-def get_wikipedia_img(name, cat):
-    """Birinci Motor: Wikipedia API"""
+# --- Yenilenmiş Görsel Çekme Motoru ---
+@st.cache_data(ttl=3600)
+def get_img_final(name, cat):
+    # 1. Yöntem: Wikipedia Page Images API (En güvenlisi)
     try:
         query = name
         if cat == "Şirket Logoları": query = f"{name} logo"
         
-        # Wikipedia API üzerinden orijinal görseli iste
-        api_url = "https://en.wikipedia.org/w/api.php"
-        params = {
-            "action": "query", "format": "json", "titles": query,
-            "prop": "pageimages", "piprop": "original", "redirects": 1
+        S = requests.Session()
+        URL = "https://en.wikipedia.org/w/api.php"
+        
+        PARAMS = {
+            "action": "query",
+            "format": "json",
+            "titles": query,
+            "prop": "pageimages",
+            "piprop": "original",
+            "redirects": 1
         }
-        res = requests.get(api_url, params=params, timeout=5).json()
-        pages = res['query']['pages']
+        
+        R = S.get(url=URL, params=PARAMS, timeout=5)
+        DATA = R.json()
+        
+        pages = DATA['query']['pages']
         for k, v in pages.items():
             if 'original' in v:
                 return v['original']['source']
-        return None
     except:
-        return None
+        pass
 
-def get_backup_img(name, cat):
-    """İkinci Motor: Unsplash & Genel Görsel Servisleri"""
-    try:
-        # Boşlukları URL formatına çevir
-        search_query = name.replace(" ", "+")
-        # Unsplash üzerinden kategoriye uygun görsel çekmeye çalış
-        if cat == "Şehirler":
-            return f"https://source.unsplash.com/featured/800x600?city,{search_query}"
-        elif cat == "Futbolcular":
-            return f"https://source.unsplash.com/featured/800x600?footballer,{search_query}"
-        else:
-            return f"https://source.unsplash.com/featured/800x600?{search_query}"
-    except:
-        return None
-
-@st.cache_data(ttl=3600)
-def get_img_final(name, cat):
-    """Hibrit Motor: Önce Wiki, olmazsa Yedek"""
-    img_url = get_wikipedia_img(name, cat)
-    if not img_url:
-        # Wikipedia bulamadıysa yedeği dene
-        img_url = get_backup_img(name, cat)
-    return img_url
+    # 2. Yöntem: Yedek Motor (Picsum veya Placeholder - Oyunun çökmesini engeller)
+    # Eğer Wikipedia'dan gelmezse, kategoriye göre rastgele ama sabit bir görsel döndürür
+    hash_id = sum(ord(c) for c in name) % 1000 # İsimden benzersiz bir ID üretir
+    if cat == "Şehirler":
+        return f"https://picsum.photos/seed/{hash_id}/800/600"
+    
+    return None
 
 # --- Yardımcı Fonksiyonlar ---
 def is_guess_correct(user_guess, correct_name):
     if not user_guess: return False
-    similarity = fuzz.token_sort_ratio(user_guess.lower(), correct_name.lower())
-    return similarity >= 80
+    return fuzz.token_sort_ratio(user_guess.lower(), correct_name.lower()) >= 80
 
 @st.cache_data
 def load_data():
-    try:
+    if os.path.exists('data.json'):
         with open('data.json', 'r', encoding='utf-8') as f:
             return json.load(f)
-    except Exception as e:
-        st.error(f"data.json okuma hatası: {e}")
-        return None
+    return None
 
 # --- Oyun Başlatma ---
 data = load_data()
@@ -92,16 +81,16 @@ if not st.session_state.game_init:
         st.session_state.difficulty = st.selectbox("Zorluk Seviyesi:", ["Kolay", "Orta", "Zor"])
         if st.button("OYUNA BAŞLA"):
             d = st.session_state.difficulty
-            # Zorluk ayarları (Blur seviyeleri)
-            if d == "Kolay": st.session_state.blur_levels, st.session_state.mult = [25, 18, 12, 6, 0], 1
-            elif d == "Orta": st.session_state.blur_levels, st.session_state.mult = [45, 30, 20, 10, 0], 2
-            else: st.session_state.blur_levels, st.session_state.mult = [80, 55, 35, 15, 0], 3
+            if d == "Kolay": st.session_state.blur_levels, st.session_state.mult = [20, 15, 10, 5, 0], 1
+            elif d == "Orta": st.session_state.blur_levels, st.session_state.mult = [40, 25, 15, 8, 0], 2
+            else: st.session_state.blur_levels, st.session_state.mult = [70, 50, 30, 15, 0], 3
             st.session_state.game_init = True
             st.rerun()
     else:
-        st.stop()
+        st.error("data.json dosyası bulunamadı!")
+    st.stop()
 
-# Soru Seçimi
+# Soru Yönetimi
 if st.session_state.target_item is None and not st.session_state.game_finished:
     pool = data[st.session_state.category]
     available = [i for i in pool if i['name'] not in st.session_state.played_items]
@@ -114,15 +103,13 @@ if st.session_state.target_item is None and not st.session_state.game_finished:
         st.session_state.game_finished = True
 
 if st.session_state.game_finished:
-    st.balloons()
-    st.title("🏆 Yarışma Bitti!")
-    st.metric("Toplam Puan", st.session_state.total_score)
-    if st.button("🔄 Tekrar Oyna"):
-        for key in list(st.session_state.keys()): del st.session_state[key]
+    st.balloons(); st.title("🏆 Oyun Bitti!"); st.metric("Toplam Puan", st.session_state.total_score)
+    if st.button("Tekrar Oyna"):
+        for k in list(st.session_state.keys()): del st.session_state[k]
         st.rerun()
     st.stop()
 
-# --- Oyun Ekranı ---
+# --- Görüntüleme ---
 item = st.session_state.target_item
 st.subheader(f"Soru: {st.session_state.current_question}/5 | Skor: {st.session_state.total_score}")
 
@@ -130,29 +117,27 @@ url = get_img_final(item['name'], st.session_state.category)
 
 if url:
     try:
-        # User-agent ekleyerek resmi indir
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
-        img = Image.open(BytesIO(response.content)).convert("RGB")
-        
-        # Blur uygula
+        # Wikipedia'nın engellememesi için User-Agent ile çekiyoruz
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        img = Image.open(BytesIO(res.content)).convert("RGB")
         blur_val = st.session_state.blur_levels[min(st.session_state.attempts, 4)]
         st.image(img.filter(ImageFilter.GaussianBlur(blur_val)), use_container_width=True)
     except:
-        st.warning("Görsel yüklenirken bir sorun oluştu, yeni soruya geçiliyor...")
+        st.warning("Görsel yüklenemedi, yeni soruya geçiliyor...")
         st.session_state.target_item = None
         st.rerun()
 else:
-    st.error("Görsel bulunamadı, atlanıyor...")
+    st.info("Bu öğe için görsel bulunamadı, yeni soru seçiliyor...")
     st.session_state.target_item = None
+    time.sleep(1)
     st.rerun()
 
-# --- Tahmin Bölümü ---
+# Form
 with st.form("guess_form", clear_on_submit=True):
-    guess = st.text_input("Bu kim / ne?")
-    if st.form_submit_button("Tahmin Et"):
+    guess = st.text_input("Tahmininiz:")
+    if st.form_submit_button("Gönder"):
         if is_guess_correct(guess, item['name']):
-            st.success(f"Harika! Doğru cevap: {item['name']}")
+            st.success(f"✅ Doğru! {item['name']}")
             st.session_state.total_score += (5 - st.session_state.attempts) * 10 * st.session_state.mult
             time.sleep(2)
             st.session_state.target_item = None
@@ -161,14 +146,8 @@ with st.form("guess_form", clear_on_submit=True):
         else:
             st.session_state.attempts += 1
             if st.session_state.attempts >= 5:
-                st.error(f"Maalesef! Doğru cevap: {item['name']}")
+                st.error(f"❌ Elendin! Cevap: {item['name']}")
                 time.sleep(2)
                 st.session_state.target_item = None
                 st.session_state.current_question += 1
             st.rerun()
-
-# İpuçları
-if st.session_state.attempts > 0:
-    st.info(f"📍 İpucu 1: {item['nationality']}")
-if st.session_state.attempts > 2:
-    st.info(f"💡 İpucu 2: {item['moment']}")
